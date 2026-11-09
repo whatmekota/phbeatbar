@@ -3,10 +3,21 @@
   "name": "Beat bar",
   "version": "0.2.1",
   "description": "A beat meter over the video, like a Cock Hero beat bar: follow the script's strokes by hand.",
+  "icon": "icon.png",
   "author": "whatmekota",
   "main": "dist/index.js",
   "api": 2,
-  "permissions": ["player", "scripts", "stage"],
+  "permissions": [
+    "player",
+    "scripts",
+    "stage"
+  ],
   "category": "visuals",
-  "keywords": ["beat bar", "beat meter", "cock hero", "metronome", "tempo"]
+  "keywords": [
+    "beat bar",
+    "beat meter",
+    "cock hero",
+    "metronome",
+    "tempo"
+  ]
 }

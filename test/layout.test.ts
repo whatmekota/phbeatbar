@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { aheadInScript, barRect, EDGE_GAP, heatColor, markerAlpha, markerRadius, markersAt, pulseAt, rowEnd, scriptTime, tailFade, uncertainFade } from '../src/layout.ts'
+import { aheadInScript, barRect, EDGE_GAP, meterTrack, MIN_WINDOW_S, uncrowdedWindow, windowFor, heatColor, markerAlpha, markerRadius, markersAt, pulseAt, rowEnd, scriptTime, tailFade, uncertainFade } from '../src/layout.ts'
 import { cleanActions, turningPoints } from '../src/turns.ts'
 
 // Bottoms at 0, 500, 1000…, tops between; full strokes.
@@ -185,5 +185,80 @@ describe('placing the bar', () => {
     const right = barRect(layer, 900, { ...base, side: 'right', align: 'start' })
     assert.equal(right.x, 1600 - EDGE_GAP - 50)
     assert.equal(right.y, EDGE_GAP)
+  })
+})
+
+describe('the window on a narrow picture', () => {
+  // A 16:9 video 1332×749, and a 9:16 one of the same height, 421 px wide.
+  const wide = { x: 0, y: 0, w: 1332, h: 749 }
+  const tall = { x: 455, y: 0, w: 749 * 9 / 16, h: 749 }
+  const base = { side: 'bottom', align: 'centre', thickness: 50, insetTop: 0, insetBottom: 0 } as const
+  /** Pixels a second the beats move at: the bar's run over the window. */
+  const pxPerS = (picture: typeof wide, length: number, lookahead: number) => {
+    const bar = barRect(picture, 749, { ...base, length })
+    return bar.w / windowFor(lookahead, bar, picture, { side: 'bottom', length })
+  }
+
+  it('keeps the whole lookahead on a wide picture', () => {
+    const bar = barRect(wide, 749, { ...base, length: 1 })
+    assert.equal(windowFor(3, bar, wide, { side: 'bottom', length: 1 }), 3)
+  })
+
+  it('shrinks it on a tall one, so the beats keep their spacing', () => {
+    for (const length of [1, 0.8]) {
+      const a = pxPerS(wide, length, 8)
+      const b = pxPerS(tall, length, 8)
+      assert.ok(Math.abs(a - b) / a < 0.02, `${length}: ${a} vs ${b}`)
+    }
+  })
+
+  it('never looks less than 1.5 s ahead, so a beat stays in sight', () => {
+    const bar = barRect(tall, 749, { ...base, length: 0.3 })
+    assert.equal(windowFor(3, bar, tall, { side: 'bottom', length: 0.3 }), MIN_WINDOW_S)
+    // …unless the lookahead itself is shorter.
+    assert.equal(windowFor(1, bar, tall, { side: 'bottom', length: 0.3 }), 1)
+  })
+
+  it('leaves a bar on the left or right alone: the height is the same', () => {
+    const bar = barRect(tall, 749, { ...base, side: 'left', length: 1 })
+    assert.equal(windowFor(3, bar, tall, { side: 'left', length: 1 }), 3)
+  })
+
+  it('keeps beats at 180 strokes a minute apart on a tall picture', () => {
+    // A full-width bar on a 9:16 picture, a beat every 333 ms.
+    const bar = barRect(tall, 749, { ...base, length: 1 })
+    const w = windowFor(3, bar, tall, { side: 'bottom', length: 1 })
+    const gapPx = (bar.w / (w * 1000)) * 333
+    assert.ok(gapPx > 40, `${gapPx}`)
+  })
+})
+
+describe('keeping beats apart on a short bar', () => {
+  it('leaves the window alone when the beats fit', () => {
+    // 120 a minute over 600 px in 3 s: 100 px apart.
+    assert.equal(uncrowdedWindow(3000, 600, 500, 30), 3000)
+  })
+
+  it('cuts it so the beats stay at least the gap apart', () => {
+    // 180 a minute on a 100 px track, 30 px gaps wanted: 3.3 beats, 1111 ms.
+    const w = uncrowdedWindow(3000, 100, 333.3, 30)
+    assert.ok(Math.abs(w - 1111) < 1)
+    assert.ok((100 / w) * 333.3 >= 30 - 1e-9)
+  })
+
+  it('always keeps the next beat in sight', () => {
+    assert.equal(uncrowdedWindow(3000, 20, 500, 30), 600)
+  })
+
+  it('does nothing without a tempo', () => {
+    assert.equal(uncrowdedWindow(3000, 100, 0, 30), 3000)
+  })
+
+  it('measures the track as the meter lays it out', () => {
+    const plain = meterTrack(600, 50, { centre: false, label: false, markerR: 10 })
+    assert.equal(plain.spanPx, 600 - 20 - 30)
+    assert.equal(plain.minGapPx, 28)
+    assert.ok(meterTrack(600, 50, { centre: false, label: true, markerR: 10 }).spanPx < plain.spanPx)
+    assert.equal(meterTrack(600, 50, { centre: true, label: false, markerR: 10 }).spanPx, plain.spanPx / 2)
   })
 })

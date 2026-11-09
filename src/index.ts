@@ -1,13 +1,14 @@
 import type { Palette } from './draw'
 import type { Rect } from './layout'
-import type { Config, Look } from './settings'
+import type { Config } from './settings'
 import type { Action, Turn } from './turns'
 import type { EdgeState, PlayerSnapshot, PluginContext, ScriptSnapshot } from './types'
 import { drawGuide, drawMeter } from './draw'
-import { aheadInScript, barRect, rowEnd, scriptTime } from './layout'
+import { aheadInScript, barRect, meterTrack, rowEnd, scriptTime, uncrowdedWindow, windowFor } from './layout'
 import { createMetronome, SCHEDULE_AHEAD_MS } from './metronome'
 import { createReadoutTracker } from './readout'
-import { effectiveConfig, FIELDS, matchesLook, PRESETS, readConfig } from './settings'
+import { FIELDS, lookChanges, migrate, readConfig } from './settings'
+import { SHAPE_SCALE } from './shapes'
 import { CSS } from './style'
 import { cleanActions, firstAtOrAfter, pathBetween, positionAt, spmAround, turningPoints } from './turns'
 
@@ -20,7 +21,8 @@ import { cleanActions, firstAtOrAfter, pathBetween, positionAt, spmAround, turni
  *
  * Without a script it follows playhound's generated motion (music sync, tap
  * tempo, Manual) through motion.readout, and hides when there is neither.
- * A tall video gets the Portrait look, over the picture itself. It draws
+ * On a tall video it keeps over the picture, its beats spaced as on a wide
+ * one. It draws
  * only while something moves, and panic hides it.
  *
  * Written for plugin API 2 (playhound 2.0); what playhound 2.2 adds (the
@@ -65,21 +67,19 @@ function readPalette(): Palette {
   }
 }
 
-/** The video's own size from playhound 2.2's player.state(); null before it loads, and on older playhound. */
-function sizeOf(s: PlayerSnapshot): { w: number, h: number } | null {
-  return typeof s.width === 'number' && typeof s.height === 'number' && s.width > 0 && s.height > 0 ? { w: s.width, h: s.height } : null
-}
-
 export default function activate(ctx: PluginContext) {
   ctx.ui.style(CSS)
   let values: Record<string, unknown> = ctx.settings.all()
-  /** The playing video's own size, once known (playhound 2.2): it decides the Portrait look. */
-  let video: { w: number, h: number } | null = null
-  let cfg: Config = effectiveConfig(values, video)
+  // 0.2.0's Portrait look and Video shape setting are gone: bring their values over.
+  const moved = migrate(values)
+  for (const [k, v] of Object.entries(moved))
+    ctx.settings.set(k, v)
+  values = { ...values, ...moved }
+  let cfg: Config = readConfig(values)
   /** Bumped by anything that changes the picture other than time. */
   let version = 0
   const refresh = () => {
-    cfg = effectiveConfig(values, video)
+    cfg = readConfig(values)
     version++
   }
 
@@ -97,17 +97,9 @@ export default function activate(ctx: PluginContext) {
   takeScripts(ctx.scripts.current())
   ctx.scripts.onChange(takeScripts)
 
-  // ─── The video's shape ───────────────────────────────────────────────────
   let player: PlayerSnapshot = ctx.player.state()
-  video = sizeOf(player)
-  refresh()
   ctx.player.onChange((s) => {
     player = s
-    const size = sizeOf(s)
-    if (size?.w !== video?.w || size?.h !== video?.h) {
-      video = size
-      refresh()
-    }
     version++
   })
 
@@ -131,18 +123,9 @@ export default function activate(ctx: PluginContext) {
   ctx.settings.onChange((v) => {
     const prev = values
     values = v
-    const look = v.look as Look
-    if (look !== prev.look && look in PRESETS) {
-      // A look was picked: everything it sets, set (the form shows it).
-      for (const [k, want] of Object.entries(PRESETS[look as keyof typeof PRESETS])) {
-        if (v[k] !== want)
-          ctx.settings.set(k, want)
-      }
-    }
-    else if (look in PRESETS && !matchesLook(look as keyof typeof PRESETS, v)) {
-      // Something the look sets was changed by hand: it's the user's own now.
-      ctx.settings.set('look', 'custom')
-    }
+    // Picking a look sets what it sets; changing one of those by hand makes it Custom.
+    for (const [k, want] of Object.entries(lookChanges(prev, v)))
+      ctx.settings.set(k, want)
     refresh()
     if (!cfg.tick)
       metronome.cancel()
@@ -217,6 +200,8 @@ export default function activate(ctx: PluginContext) {
     // Where the bar goes: worked out from the layer's size, the picture in
     // it, the player's bars and the settings; checked a few times a second.
     let rect: Rect & { full: boolean } = { x: 0, y: 0, w: 0, h: 0, full: false }
+    /** How far ahead this bar looks, s: the lookahead, fitted to the bar (windowFor). */
+    let windowS = cfg.lookaheadS
     let placedAt = -Infinity
     let placedFor = ''
     function place(now: number, force = false) {
@@ -243,11 +228,13 @@ export default function activate(ctx: PluginContext) {
         insetTop: Number.isFinite(insetTop) ? insetTop : 0,
         insetBottom: Number.isFinite(insetBottom) ? insetBottom : OLD_INSET_BOTTOM,
       })
-      const sig = [r.x, r.y, r.w, r.h].map(n => Math.round(n)).join(',') + cfg.opacity
+      const sig = `${[r.x, r.y, r.w, r.h, picture.w, picture.h].map(n => Math.round(n)).join(',')}|${cfg.opacity}|${cfg.lookaheadS}`
       if (sig === placedFor)
         return
       placedFor = sig
       rect = r
+      // A shorter bar on a narrow picture looks less far ahead, so its beats keep their spacing.
+      windowS = windowFor(cfg.lookaheadS, r, picture, cfg)
       box.style.left = `${Math.round(r.x)}px`
       box.style.top = `${Math.round(r.y)}px`
       box.style.width = `${Math.round(r.w)}px`
@@ -266,6 +253,21 @@ export default function activate(ctx: PluginContext) {
     let placedVersion = -1
     /** The last tick scheduled, in the drawn time; ticks go only to later beats. */
     let tickedTo = -Infinity
+
+    /** The window cut down so beats at `beatSpm` don't pile up on this bar (meter only). */
+    function uncrowd(aheadMs: number, beatSpm: number): number {
+      if (cfg.style !== 'meter' || !(beatSpm > 0))
+        return aheadMs
+      const vertical = cfg.side === 'left' || cfg.side === 'right'
+      const T = vertical ? rect.w : rect.h
+      const markerR = T * 0.34 * (cfg.sizeByDepth ? 1 : 0.62) * SHAPE_SCALE[cfg.shape]
+      const track = meterTrack(vertical ? rect.h : rect.w, T, { centre: cfg.hit === 'centre', label: cfg.label, markerR })
+      const want = uncrowdedWindow(aheadMs, track.spanPx, 60_000 / beatSpm, track.minGapPx)
+      // Eased, so a change of tempo doesn't make the beats jump.
+      eased = Number.isFinite(eased) && Math.abs(want - eased) > 1 ? eased + (want - eased) * 0.15 : want
+      return eased
+    }
+    let eased = Number.NaN
 
     function show(on: boolean) {
       if (on === shown)
@@ -342,11 +344,12 @@ export default function activate(ctx: PluginContext) {
           show(false)
           return
         }
-        aheadMs = aheadInScript(cfg.lookaheadS, rate) * share
+        const scriptSpm = spmAround(turns, now)
+        aheadMs = uncrowd(aheadInScript(windowS, rate) * share, scriptSpm)
         list = turns
         rowEndX = rowEnd(turns, now, aheadMs)
         // Strokes a minute as they come at this speed.
-        spm = spmAround(turns, now) * rate
+        spm = scriptSpm * rate
         if (cfg.style === 'guide') {
           path = pathBetween(actions, now, now + aheadMs)
           posNow = positionAt(actions, now) ?? 50
@@ -361,10 +364,10 @@ export default function activate(ctx: PluginContext) {
       }
       else {
         now = ms
-        aheadMs = cfg.lookaheadS * 1000 * share
+        spm = tracker.spm()
+        aheadMs = uncrowd(windowS * 1000 * share, spm)
         // Behind as far as the beat-in-the-middle shows past beats.
         list = tracker.turns(now, aheadMs, aheadMs)
-        spm = tracker.spm()
         if (cfg.style === 'guide') {
           path = tracker.path(now, aheadMs)
           posNow = Math.min(1, Math.max(0, ctx.motion.readout().pos)) * 100
@@ -379,7 +382,7 @@ export default function activate(ctx: PluginContext) {
       const edgeText = holding ? `Edge · ${Math.max(0, Math.ceil(edge!.remainingSec))} s` : null
 
       // Nothing moved (paused, and nothing else changed): leave the picture as it is.
-      const sig = `${now}|${posNow}|${version}|${rect.w}x${rect.h}@${dpr}|${source}|${edgeText}|${edgeDim.toFixed(2)}`
+      const sig = `${now}|${Math.round(aheadMs)}|${posNow}|${version}|${rect.w}x${rect.h}@${dpr}|${source}|${edgeText}|${edgeDim.toFixed(2)}`
       if (sig === drawn)
         return
       drawn = sig

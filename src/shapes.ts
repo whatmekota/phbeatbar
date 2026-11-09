@@ -118,3 +118,24 @@ export function shapePath(shape: Shape): Path2D {
   }
   return p
 }
+
+const extents = new Map<Shape, ReturnType<typeof bounds>>()
+
+/** How far a shape reaches from its centre each way, at unit size (for placing things beside it). */
+export function shapeExtent(shape: Shape): ReturnType<typeof bounds> {
+  let b = extents.get(shape)
+  if (!b) {
+    b = bounds(shapeOps(shape))
+    extents.set(shape, b)
+  }
+  return b
+}
+
+/**
+ * How far the outline of a marker drawn `r` big reaches from its centre
+ * downward, or leftward: where a pointer at it starts.
+ */
+export function outlineReach(shape: Shape, r: number, toward: 'below' | 'left'): number {
+  const e = shapeExtent(shape)
+  return r * SHAPE_SCALE[shape] * (toward === 'left' ? -e.minX : e.maxY)
+}

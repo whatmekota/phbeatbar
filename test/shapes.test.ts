@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { bounds, SHAPE_SCALE, shapeOps, SHAPES } from '../src/shapes.ts'
+import { bounds, outlineReach, SHAPE_SCALE, shapeOps, SHAPES } from '../src/shapes.ts'
 
 describe('marker shapes', () => {
   it('each fits the unit square round its centre', () => {
@@ -42,5 +42,23 @@ describe('marker shapes', () => {
     assert.equal(SHAPE_SCALE.circle, 1)
     for (const s of SHAPES)
       assert.ok(SHAPE_SCALE[s] >= 1 && SHAPE_SCALE[s] < 1.4)
+  })
+})
+
+describe('the hit marker\'s outline', () => {
+  it('reaches as far as the shape does, scaled like a marker', () => {
+    assert.equal(outlineReach('circle', 10, 'below'), 10)
+    assert.equal(outlineReach('circle', 10, 'left'), 10)
+    assert.equal(+outlineReach('heart', 10, 'below').toFixed(3), +(10 * SHAPE_SCALE.heart * 0.92).toFixed(3))
+    assert.equal(+outlineReach('diamond', 10, 'left').toFixed(3), +(10 * SHAPE_SCALE.diamond * 0.78).toFixed(3))
+  })
+
+  it('puts a pointer clear of every shape, and no further than the shape\'s box', () => {
+    for (const s of SHAPES) {
+      for (const side of ['below', 'left'] as const) {
+        const reach = outlineReach(s, 10, side)
+        assert.ok(reach > 5 && reach <= 10 * SHAPE_SCALE[s] + 1e-9, `${s} ${side}: ${reach}`)
+      }
+    }
   })
 })

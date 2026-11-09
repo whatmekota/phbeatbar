@@ -189,3 +189,54 @@ export function barRect(picture: Rect, layerH: number, p: BarPlacement): Rect & 
   const x = p.side === 'left' ? picture.x + EDGE_GAP : picture.x + picture.w - EDGE_GAP - w
   return { x, y: place(top, bottom - top, h), w, h, full }
 }
+
+/** The picture shape the bar's spacing is set for: a landscape video, 16:9. */
+export const REFERENCE_ASPECT = 16 / 9
+/** However short the bar, it looks at least this far ahead (unless the lookahead itself is shorter), s. */
+export const MIN_WINDOW_S = 1.5
+
+/**
+ * How far ahead a bar along the top or bottom looks, s. The lookahead is set
+ * for a landscape picture; on a narrower one (a portrait video, pillarboxed)
+ * the same bar is shorter, so the window shrinks with it and the beats keep
+ * the spacing, in px a second, they would have on a 16:9 picture of the
+ * same height. Never below MIN_WINDOW_S, so a beat is still in sight; never
+ * above the lookahead. A bar on the left or right runs along the height,
+ * which a narrow picture doesn't change.
+ */
+export function windowFor(lookaheadS: number, bar: { w: number, h: number }, picture: { w: number, h: number }, p: Pick<BarPlacement, 'side' | 'length'>): number {
+  if (p.side === 'left' || p.side === 'right' || !(picture.h > 0) || !(bar.w > 0))
+    return lookaheadS
+  const refW = picture.h * REFERENCE_ASPECT
+  if (picture.w >= refW)
+    return lookaheadS
+  const full = p.length >= 0.999
+  const margin = full ? 0 : EDGE_GAP
+  const refBar = Math.max(1, (refW - 2 * margin) * Math.min(1, Math.max(0.05, p.length)))
+  const scaled = lookaheadS * Math.min(1, bar.w / refBar)
+  return Math.min(lookaheadS, Math.max(MIN_WINDOW_S, scaled))
+}
+
+/**
+ * The window, cut down if need be so beats `beatMs` apart land at least
+ * `minGapPx` apart on a track `spanPx` long: on a short bar, fast strokes
+ * would otherwise pile up. It always keeps a little more than one beat, so
+ * the next one is in sight. `aheadMs` and `beatMs` in the same time.
+ */
+export function uncrowdedWindow(aheadMs: number, spanPx: number, beatMs: number, minGapPx: number): number {
+  if (!(beatMs > 0) || !(spanPx > 0) || !(minGapPx > 0))
+    return aheadMs
+  const most = (spanPx / minGapPx) * beatMs
+  return Math.min(aheadMs, Math.max(beatMs * 1.2, most))
+}
+
+/**
+ * Roughly how long the beat meter's track is, px, from the hit zone to the
+ * far end (as drawMeter lays it out), and the least gap between two beats
+ * that keeps markers `markerR` px across from touching.
+ */
+export function meterTrack(length: number, thickness: number, opts: { centre: boolean, label: boolean, markerR: number }): { spanPx: number, minGapPx: number } {
+  const room = opts.label ? thickness * 1.9 : thickness * 0.4
+  const run = Math.max(0, length - room - thickness * 0.6)
+  return { spanPx: opts.centre ? run / 2 : run, minGapPx: opts.markerR * 2.4 + 4 }
+}

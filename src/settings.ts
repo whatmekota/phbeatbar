@@ -7,13 +7,11 @@ export type Style = 'meter' | 'guide'
 export type Hit = 'start' | 'centre'
 export type Colour = 'speed' | 'accent' | 'white' | 'pink'
 export type Ring = 'ring' | 'pointer' | 'none'
-export type Look = 'custom' | 'classic' | 'hearts' | 'portrait'
-export type Layout = 'auto' | 'landscape' | 'portrait'
+export type Look = 'custom' | 'classic' | 'hearts'
 export type EdgeMode = 'show' | 'hide'
 
 export interface Config {
   visible: boolean
-  layout: Layout
   look: Look
   style: Style
   side: Side
@@ -49,11 +47,9 @@ export const PRESETS: Record<Exclude<Look, 'custom'>, Record<string, unknown>> =
   // A thin line across the bottom, the beat in the middle under a ring with
   // a pointer: past beats grey on the left, the coming ones pink on the right.
   classic: { style: 'meter', side: 'bottom', align: 'centre', length: 100, size: 80, strip: false, hit: 'centre', shape: 'circle', colour: 'pink', sizeByDepth: false, ring: 'pointer', label: false },
-  // Pink hearts in a dark strip along the bottom; the first heart is the beat.
-  hearts: { style: 'meter', side: 'bottom', align: 'centre', length: 100, size: 110, strip: true, hit: 'start', shape: 'heart', colour: 'pink', sizeByDepth: false, ring: 'none', label: false },
-  // For a tall video: white dots on the left half of the picture, near the
-  // bottom, the beat in a ring at the left end.
-  portrait: { style: 'meter', side: 'bottom', align: 'start', length: 50, size: 90, strip: false, hit: 'start', shape: 'circle', colour: 'white', sizeByDepth: false, ring: 'ring', label: false },
+  // Pink hearts in a dark strip along the bottom, landing in a hollow heart
+  // at the left end.
+  hearts: { style: 'meter', side: 'bottom', align: 'centre', length: 100, size: 110, strip: true, hit: 'start', shape: 'heart', colour: 'pink', sizeByDepth: false, ring: 'ring', label: false },
 }
 export const LOOK_KEYS = Object.keys(PRESETS.classic)
 
@@ -62,22 +58,8 @@ export function matchesLook(look: Exclude<Look, 'custom'>, v: Record<string, unk
   return Object.entries(PRESETS[look]).every(([k, want]) => v[k] === want)
 }
 
-const portraitHint = 'Auto: a tall video gets the Portrait look, over the picture itself; anything else gets the look below.'
-
 export const FIELDS: SettingField[] = [
   { key: 'visible', type: 'switch', label: 'Show the beat bar', hint: 'Also Shift+B, or "Show or hide the beat bar" in the command palette (Ctrl K).', default: true },
-  {
-    key: 'layout',
-    type: 'select',
-    label: 'Video shape',
-    hint: portraitHint,
-    options: [
-      { value: 'auto', label: 'Auto: Portrait look for tall videos' },
-      { value: 'landscape', label: 'Always the look below' },
-      { value: 'portrait', label: 'Always the Portrait look' },
-    ],
-    default: 'auto',
-  },
   {
     key: 'look',
     type: 'select',
@@ -86,8 +68,7 @@ export const FIELDS: SettingField[] = [
     options: [
       { value: 'custom', label: 'Custom' },
       { value: 'classic', label: 'Classic centre: a line, the beat in the middle' },
-      { value: 'hearts', label: 'Hearts: a strip of hearts, the beat on the left' },
-      { value: 'portrait', label: 'Portrait: white dots on the left half' },
+      { value: 'hearts', label: 'Hearts: a strip of hearts landing in a hollow heart on the left' },
     ],
     default: 'custom',
   },
@@ -175,8 +156,8 @@ export const FIELDS: SettingField[] = [
     type: 'select',
     label: 'Hit marker',
     options: [
-      { value: 'ring', label: 'A ring' },
-      { value: 'pointer', label: 'A ring with a pointer' },
+      { value: 'ring', label: 'An outline of the marker (a ring for circles, a hollow heart for hearts…)' },
+      { value: 'pointer', label: 'The outline, with a pointer' },
       { value: 'none', label: 'None: the beat itself pops' },
     ],
     default: 'ring',
@@ -226,8 +207,7 @@ const oneOf = <T extends string>(v: unknown, allowed: readonly T[], fallback: T)
 export function readConfig(v: Record<string, unknown>): Config {
   return {
     visible: v.visible !== false,
-    layout: oneOf(v.layout, ['auto', 'landscape', 'portrait'] as const, 'auto'),
-    look: oneOf(v.look, ['custom', 'classic', 'hearts', 'portrait'] as const, 'custom'),
+    look: oneOf(v.look, ['custom', 'classic', 'hearts'] as const, 'custom'),
     style: oneOf(v.style, ['meter', 'guide'] as const, 'meter'),
     side: oneOf(v.side, ['bottom', 'top', 'left', 'right'] as const, 'bottom'),
     align: oneOf(v.align, ['start', 'centre', 'end'] as const, 'centre'),
@@ -251,17 +231,46 @@ export function readConfig(v: Record<string, unknown>): Config {
   }
 }
 
-/** Whether the Portrait look applies: forced, or Auto with a video taller than wide. */
-export function usePortrait(layout: Layout, video: { w: number, h: number } | null): boolean {
-  if (layout === 'portrait')
-    return true
-  if (layout === 'landscape' || !video)
-    return false
-  return video.h > video.w
+/** What 0.2.0's Portrait look set: white dots on the left half, the beat in a ring at the left end. */
+const OLD_PORTRAIT: Record<string, unknown> = { style: 'meter', side: 'bottom', align: 'start', length: 50, size: 90, strip: false, hit: 'start', shape: 'circle', colour: 'white', sizeByDepth: false, ring: 'ring', label: false }
+
+/**
+ * What to set to bring 0.2.0's settings up to date. Its Portrait look and
+ * its Video shape setting (Auto, always landscape, always portrait) are
+ * gone: a tall video now keeps the user's own settings, fitted to its
+ * picture. A picked Portrait look becomes Custom with the values it set;
+ * "always the Portrait look" becomes those values too; the shape setting
+ * itself is cleared.
+ */
+export function migrate(v: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  if (v.layout === 'portrait') {
+    for (const [k, want] of Object.entries(OLD_PORTRAIT)) {
+      if (v[k] !== want)
+        out[k] = want
+    }
+    out.look = 'custom'
+  }
+  if (v.look === 'portrait')
+    out.look = 'custom'
+  if (v.layout !== undefined)
+    out.layout = undefined
+  return out
 }
 
-/** The config to draw with: the user's, with the Portrait look over it when that applies. */
-export function effectiveConfig(values: Record<string, unknown>, video: { w: number, h: number } | null): Config {
-  const base = readConfig(values)
-  return usePortrait(base.layout, video) ? readConfig({ ...values, ...PRESETS.portrait }) : base
+/**
+ * What to set after the settings changed from `prev` to `next`, for the
+ * looks: picking a look sets everything it sets (only what differs, so the
+ * look itself stays picked); changing one of those by hand afterwards makes
+ * the look Custom. Applying a look's own values never counts as a change by
+ * hand, as they match it.
+ */
+export function lookChanges(prev: Record<string, unknown>, next: Record<string, unknown>): Record<string, unknown> {
+  const look = next.look as Look
+  if (!(look in PRESETS))
+    return {}
+  const preset = PRESETS[look as Exclude<Look, 'custom'>]
+  if (look !== prev.look)
+    return Object.fromEntries(Object.entries(preset).filter(([k, want]) => next[k] !== want))
+  return matchesLook(look as Exclude<Look, 'custom'>, next) ? {} : { look: 'custom' }
 }

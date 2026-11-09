@@ -3,7 +3,7 @@ import type { Colour, Hit, Ring } from './settings'
 import type { Shape } from './shapes'
 import type { Action, Turn } from './turns'
 import { heatColor, markerAlpha, markerRadius, markersAt, pulseAt, tailFade, uncertainFade } from './layout'
-import { SHAPE_SCALE, shapePath } from './shapes'
+import { outlineReach, SHAPE_SCALE, shapePath } from './shapes'
 
 /** The theme's colours, read off playhound's CSS variables (a canvas can't use them directly). */
 export interface Palette {
@@ -120,6 +120,37 @@ function marker(g: CanvasRenderingContext2D, shape: Shape, x: number, y: number,
 }
 
 /**
+ * The hit marker: the markers' own shape as an outline, `r` like a marker's,
+ * stroked `width` screen px wide over a darker, wider stroke so it reads on
+ * any picture at any size.
+ */
+function outline(g: CanvasRenderingContext2D, shape: Shape, x: number, y: number, r: number, dpr: number, colour: string, alpha: number, width: number) {
+  const k = r * SHAPE_SCALE[shape]
+  g.setTransform(dpr * k, 0, 0, dpr * k, dpr * x, dpr * y)
+  const path = shapePath(shape)
+  g.lineJoin = 'round'
+  g.globalAlpha = alpha * 0.45
+  g.strokeStyle = 'rgba(0,0,0,0.7)'
+  g.lineWidth = (width + 2) / k
+  g.stroke(path)
+  g.globalAlpha = alpha
+  g.strokeStyle = colour
+  g.lineWidth = width / k
+  g.stroke(path)
+  g.setTransform(dpr, 0, 0, dpr, 0, 0)
+}
+
+/** The flash of the hit zone, in the markers' shape. */
+function flash(g: CanvasRenderingContext2D, shape: Shape, x: number, y: number, r: number, dpr: number, colour: string, alpha: number) {
+  const k = r * SHAPE_SCALE[shape]
+  g.setTransform(dpr * k, 0, 0, dpr * k, dpr * x, dpr * y)
+  g.globalAlpha = alpha
+  g.fillStyle = colour
+  g.fill(shapePath(shape))
+  g.setTransform(dpr, 0, 0, dpr, 0, 0)
+}
+
+/**
  * The beat meter: a track with the hit zone at its start or in its middle.
  * Horizontal (top or bottom of the picture) the beats come in from the
  * right; vertical (left or right) they fall from the top. With the beat at
@@ -180,15 +211,12 @@ export function drawMeter(g: CanvasRenderingContext2D, f: MeterFrame) {
   // The hit zone's flash, under the markers.
   const [hx, hy] = at(hitA)
   if (f.ring !== 'none' && pulse > 0.01 && hit) {
-    g.globalAlpha = 0.5 * pulse * f.edgeDim
-    g.fillStyle = colourOf(f, hit.speed)
-    g.beginPath()
-    g.arc(hx, hy, ringR * (0.95 + 0.4 * pulse), 0, Math.PI * 2)
-    g.fill()
+    flash(g, f.shape, hx, hy, ringR * (0.95 + 0.4 * pulse), dpr, colourOf(f, hit.speed), 0.5 * pulse * f.edgeDim)
   }
 
   for (const m of markersAt(f.turns, f.now, f.aheadMs, f.aheadMs * behindX)) {
-    const past = m.x < 0
+    // The beat that just landed keeps its colour while it pops; older ones grey.
+    const past = m.x < 0 && !(m.turn === hit && pulse > 0.01)
     let alpha = markerAlpha(m.x, behindX) * tailFade(m.x, f.rowEndX) * (f.uncertain ? uncertainFade(m.x) : 1) * f.edgeDim
     if (past && f.hit === 'centre')
       alpha *= 0.6
@@ -197,7 +225,7 @@ export function drawMeter(g: CanvasRenderingContext2D, f: MeterFrame) {
     const [x, y] = at(hitA + m.x * span)
     if (m.turn.kind === 'bottom') {
       let r = f.sizeByDepth ? markerRadius(m.turn.amp, maxR) : fixedR
-      if (past && f.hit === 'start')
+      if (m.x < 0 && f.hit === 'start')
         r *= 1 + (m.x / behindX) * 0.5
       if (m.turn === hit)
         r *= 1 + 0.35 * pulse
@@ -223,19 +251,19 @@ export function drawMeter(g: CanvasRenderingContext2D, f: MeterFrame) {
     }
   }
 
-  // The hit zone itself, on top: a ring, and maybe a pointer at it from the outer side.
+  // The hit zone itself, on top: the markers' shape as an outline (a ring
+  // for circles, a hollow heart for hearts…), and maybe a pointer at it from
+  // the outer side.
   if (f.ring !== 'none') {
     const plain = f.colour === 'speed' || f.colour === 'accent' ? p.accent : '#ffffff'
-    g.globalAlpha = (0.65 + 0.35 * pulse) * Math.max(0.5, f.edgeDim)
-    g.strokeStyle = pulse > 0.01 ? '#ffffff' : plain
-    g.lineWidth = Math.max(1.5, 2 * f.scale)
-    g.beginPath()
-    g.arc(hx, hy, ringR * (1 + 0.15 * pulse), 0, Math.PI * 2)
-    g.stroke()
+    const width = Math.max(1.5, 2 * f.scale)
+    outline(g, f.shape, hx, hy, ringR * (1 + 0.15 * pulse), dpr, pulse > 0.01 ? '#ffffff' : plain, (0.65 + 0.35 * pulse) * Math.max(0.5, f.edgeDim), width)
     if (f.ring === 'pointer') {
-      const gap = ringR + T * 0.04
-      const len = T * 0.13
-      const half = T * 0.09
+      // Just past the outline's own edge: below it, or to its left on a vertical bar.
+      const len = T * 0.1
+      const half = T * 0.08
+      // Kept inside the bar: a tall outline lets the pointer tuck in under it.
+      const gap = Math.min(outlineReach(f.shape, ringR, vertical ? 'left' : 'below') + width / 2 + T * 0.02, T / 2 - len - 1)
       g.fillStyle = '#ffffff'
       g.beginPath()
       if (vertical) {

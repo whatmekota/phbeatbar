@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.1
+
+- The **hit marker takes the markers' shape**: a ring for circles, a hollow heart for hearts, a star, paw or diamond outline for the others, with the pointer under it if picked. The beat lands in it and pops, in its own colour.
+- The **Hearts** look has its big hollow heart at the left end, for the beat to land in.
+- **Tall videos keep your settings** instead of switching to a Portrait look: the bar sits over the picture and its length is measured on it, and a shorter bar looks less far ahead (at least 1.5 s) so the beats keep their spacing. On a very short bar fast beats are spread out, never piled up.
+- The **Portrait** look and the **Video shape** setting are gone. A saved Portrait look, or "always the Portrait look", becomes Custom with the values it set.
+- Picking a look keeps it picked (a test makes sure of it).
+
 ## 0.2.0
 
 - **Looks** in one click: **Classic centre**, **Hearts** and **Portrait**. Changing anything they set makes the look Custom.

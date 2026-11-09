@@ -1,12 +1,12 @@
 {
   "name": "phbeatbar",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
     "build:public": "node build.mjs --public --minify",
-    "test": "node --import tsx --test test/turns.test.ts test/layout.test.ts test/readout.test.ts",
+    "test": "node --import tsx --test test/turns.test.ts test/layout.test.ts test/readout.test.ts test/shapes.test.ts test/settings.test.ts",
     "typecheck": "tsc -p tsconfig.json"
   },
   "devDependencies": {

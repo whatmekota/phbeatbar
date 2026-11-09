@@ -9,6 +9,10 @@ import type { Action, Turn } from './turns'
  * the coming strokes out from the last turn at the readout's tempo. It
  * corrects itself at every stroke, so a tempo change is followed within one.
  *
+ * From playhound 2.2 the readout also says when the next bottom comes
+ * (`nextStrokeInMs`): then that is used as it is, with nothing to infer, and
+ * the bar is right from the first frame.
+ *
  * Times here are real time (performance.now), not video time: the generator
  * doesn't follow the video's clock.
  */
@@ -18,6 +22,8 @@ export interface ReadoutSample {
   depth: number
   /** 0–1. */
   pos: number
+  /** playhound 2.2+: ms until the stroke is next at the bottom; null (or absent) when not known. */
+  nextStrokeInMs?: number | null
 }
 
 /** Below this, the generator isn't really stroking. */
@@ -50,6 +56,8 @@ export function createReadoutTracker(): ReadoutTracker {
   let lastBottom: { at: number, pos: number } | null = null
   let lastTop: { at: number, pos: number } | null = null
   let lastNow = -Infinity
+  /** When the next bottom is, as the readout says (2.2+), or null. */
+  let told: number | null = null
 
   function reset() {
     spm = 0
@@ -58,6 +66,7 @@ export function createReadoutTracker(): ReadoutTracker {
     lastBottom = null
     lastTop = null
     lastNow = -Infinity
+    told = null
   }
 
   function feed(now: number, r: ReadoutSample) {
@@ -67,9 +76,11 @@ export function createReadoutTracker(): ReadoutTracker {
     lastNow = now
     spm = Number.isFinite(r.spm) ? r.spm : 0
     depth = Number.isFinite(r.depth) ? r.depth : 0
+    told = typeof r.nextStrokeInMs === 'number' && Number.isFinite(r.nextStrokeInMs) ? now + r.nextStrokeInMs : null
     if (spm < MIN_SPM || depth < MIN_DEPTH) {
       lastBottom = null
       lastTop = null
+      told = null
       dir = 0
       return
     }
@@ -108,10 +119,12 @@ export function createReadoutTracker(): ReadoutTracker {
     }
   }
 
-  const ready = () => spm >= MIN_SPM && depth >= MIN_DEPTH && !!(lastBottom || lastTop)
+  const ready = () => spm >= MIN_SPM && depth >= MIN_DEPTH && (told !== null || !!(lastBottom || lastTop))
 
   /** The bottom turns' phase: a seen bottom, or half a stroke from a seen top. */
   function anchor(period: number): number {
+    if (told !== null)
+      return told
     if (lastBottom && (!lastTop || lastBottom.at >= lastTop.at - period / 2))
       return lastBottom.at
     return lastTop!.at + period / 2

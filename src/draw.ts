@@ -1,5 +1,9 @@
+import type { Rect, Side } from './layout'
+import type { Colour, Hit, Ring } from './settings'
+import type { Shape } from './shapes'
 import type { Action, Turn } from './turns'
-import { heatColor, markerAlpha, markerRadius, markersAt, pulseAt } from './layout'
+import { heatColor, markerAlpha, markerRadius, markersAt, pulseAt, tailFade, uncertainFade } from './layout'
+import { SHAPE_SCALE, shapePath } from './shapes'
 
 /** The theme's colours, read off playhound's CSS variables (a canvas can't use them directly). */
 export interface Palette {
@@ -9,8 +13,6 @@ export interface Palette {
   border: string
   font: string
 }
-
-export type Side = 'top' | 'bottom' | 'left' | 'right'
 
 export interface Frame {
   /** CSS pixels, and the device pixel ratio. */
@@ -27,8 +29,28 @@ export interface Frame {
   showTops: boolean
   /** Strokes a minute, for the label; 0 hides it. */
   spm: number
+  colour: Colour
   oklch: boolean
   palette: Palette
+  /** Where the row of strokes stops inside the window (rowEnd), or null. */
+  rowEndX: number | null
+  /** The future is a guess (generated motion): fade the far beats. */
+  uncertain: boolean
+  /** 1 normally, less while an edge holds back. */
+  edgeDim: number
+  /** "Edge · 12 s" while an edge holds, else null. */
+  edgeText: string | null
+}
+
+export interface MeterFrame extends Frame {
+  hit: Hit
+  shape: Shape
+  sizeByDepth: boolean
+  ring: Ring
+  strip: boolean
+  label: boolean
+  /** Edge to edge of the picture: square ends. */
+  full: boolean
 }
 
 export interface GuideFrame extends Frame {
@@ -38,9 +60,22 @@ export interface GuideFrame extends Frame {
   posNow: number
 }
 
+const FIXED: Record<Exclude<Colour, 'speed' | 'accent'>, string> = { white: '#ffffff', pink: '#ff5c9d' }
+/** Past beats, with the beat in the middle. */
+const PAST = 'rgb(150,150,160)'
+
+/** A marker's colour: its speed on the heatmap scale, or the one colour chosen. */
+export function colourOf(f: Pick<Frame, 'colour' | 'oklch' | 'palette'>, speed: number): string {
+  if (f.colour === 'speed')
+    return heatColor(speed, f.oklch)
+  if (f.colour === 'accent')
+    return f.palette.accent
+  return FIXED[f.colour]
+}
+
 function roundRect(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
   g.beginPath()
-  g.roundRect(x, y, w, h, Math.min(r, w / 2, h / 2))
+  g.roundRect(x, y, w, h, Math.max(0, Math.min(r, w / 2, h / 2)))
 }
 
 function background(g: CanvasRenderingContext2D, w: number, h: number, r: number, p: Palette) {
@@ -55,117 +90,173 @@ function background(g: CanvasRenderingContext2D, w: number, h: number, r: number
   g.globalAlpha = 1
 }
 
+/** Text that reads over any picture: the theme's text colour with a soft shadow. */
+function caption(g: CanvasRenderingContext2D, text: string, x: number, y: number, px: number, p: Palette, align: CanvasTextAlign) {
+  g.font = `600 ${px}px ${p.font}`
+  g.textAlign = align
+  g.textBaseline = 'middle'
+  g.fillStyle = p.text
+  g.shadowColor = 'rgba(0,0,0,0.7)'
+  g.shadowBlur = 3
+  g.globalAlpha = 0.8
+  g.fillText(text, x, y)
+  g.shadowBlur = 0
+  g.globalAlpha = 1
+}
+
+/** One marker, `r` from its centre to its edge, at (x, y). */
+function marker(g: CanvasRenderingContext2D, shape: Shape, x: number, y: number, r: number, dpr: number, fill: string, alpha: number) {
+  const k = r * SHAPE_SCALE[shape]
+  g.setTransform(dpr * k, 0, 0, dpr * k, dpr * x, dpr * y)
+  const path = shapePath(shape)
+  g.globalAlpha = alpha
+  g.fillStyle = fill
+  g.fill(path)
+  g.globalAlpha = alpha * 0.55
+  g.strokeStyle = 'rgba(0,0,0,0.6)'
+  g.lineWidth = 1 / k
+  g.stroke(path)
+  g.setTransform(dpr, 0, 0, dpr, 0, 0)
+}
+
 /**
- * The beat meter: a track with the hit zone at one end. Horizontal (top or
- * bottom of the picture) the beats come in from the right to a hit zone on
- * the left; vertical (left or right) they fall to a hit zone at the bottom.
- * Drawn in track coordinates: `a` along the track from the hit zone's end,
- * `c` across it.
+ * The beat meter: a track with the hit zone at its start or in its middle.
+ * Horizontal (top or bottom of the picture) the beats come in from the
+ * right; vertical (left or right) they fall from the top. With the beat at
+ * the start, a beat that has landed fades at once; with it in the middle,
+ * past beats carry on out the other side, greyed. Everything is placed by
+ * `a`, the distance along the track, turned into screen points by `at()`.
  */
-export function drawMeter(g: CanvasRenderingContext2D, f: Frame) {
+export function drawMeter(g: CanvasRenderingContext2D, f: MeterFrame) {
   const { w, h, dpr, palette: p } = f
   const vertical = f.side === 'left' || f.side === 'right'
   const L = vertical ? h : w
   const T = vertical ? w : h
+  const mid = T / 2
+  const at = (a: number): [number, number] => (vertical ? [mid, h - a] : [a, mid])
   g.setTransform(dpr, 0, 0, dpr, 0, 0)
   g.clearRect(0, 0, w, h)
-  const radius = T / 2
-  background(g, w, h, radius, p)
+  const radius = f.full ? 0 : T / 2
+  if (f.strip)
+    background(g, w, h, radius, p)
 
   // The tempo label has a place of its own at the far end, so beats never run under it.
   const px = Math.round(Math.max(9, 10 * f.scale))
   g.font = `600 ${px}px ${p.font}`
-  const labelRoom = vertical ? px * 2.2 : g.measureText('000 spm').width + T * 0.3
-  if (f.spm > 0) {
-    g.fillStyle = p.text
-    g.globalAlpha = 0.6
-    if (vertical) {
-      g.textAlign = 'center'
-      g.textBaseline = 'middle'
-      g.fillText(`${Math.round(f.spm)}`, w / 2, labelRoom / 2 + 2)
-    }
-    else {
-      g.textAlign = 'right'
-      g.textBaseline = 'middle'
-      g.fillText(`${Math.round(f.spm)} spm`, w - T * 0.32, h / 2 + 0.5)
-    }
-    g.globalAlpha = 1
+  const room = f.label ? (vertical ? px * 2.2 : g.measureText('000 spm').width + T * 0.3) : 0
+  if (f.label && f.spm > 0) {
+    if (vertical)
+      caption(g, `${Math.round(f.spm)}`, w / 2, room / 2 + 2, px, p, 'center')
+    else
+      caption(g, `${Math.round(f.spm)} spm`, w - T * 0.3, h / 2 + 0.5, px, p, 'right')
   }
 
-  // Everything else stays inside the track.
+  // Everything else stays inside the bar.
   g.save()
-  roundRect(g, 1, 1, w - 2, h - 2, radius)
+  const clip: Rect = { x: 1, y: 1, w: w - 2, h: h - 2 }
+  roundRect(g, clip.x, clip.y, clip.w, clip.h, radius)
   g.clip()
-  // Along → screen: right on a horizontal track, up on a vertical one.
-  if (vertical)
-    g.setTransform(0, -dpr, dpr, 0, 0, h * dpr)
 
-  const hitA = T * 0.6
-  const endA = L - labelRoom - T * 0.15
-  const span = endA - hitA
-  const mid = T / 2
+  const edgeA = T * 0.4
+  const endA = L - (room ? room + T * 0.15 : edgeA)
+  const hitA = f.hit === 'centre' ? Math.max(T * 0.6, (endA + edgeA) / 2) : T * 0.6
+  const span = Math.max(1, endA - hitA)
+  // Past the hit zone: gone within the start's little room, or all the way out with the beat in the middle.
+  const behindX = f.hit === 'centre' ? Math.max(0.01, (hitA - edgeA) / span) : Math.max(0.01, Math.min(0.12, (hitA - 2) / span))
   const maxR = T * 0.34
-  // Past the hit zone a marker fades out before it reaches the track's end.
-  const behindX = Math.max(0.01, Math.min(0.12, (hitA - 2) / span))
+  const fixedR = maxR * 0.62
+  const ringR = f.sizeByDepth ? maxR * 1.12 : maxR * 0.92
   const { pulse, turn: hit } = pulseAt(f.turns, f.now)
 
   // The line the beats travel along.
-  g.strokeStyle = p.text
-  g.globalAlpha = 0.14
+  g.strokeStyle = f.strip ? p.text : 'rgb(200,200,210)'
+  g.globalAlpha = (f.strip ? 0.14 : 0.35) * f.edgeDim
   g.lineWidth = 1
   g.beginPath()
-  g.moveTo(hitA, mid)
-  g.lineTo(endA, mid)
+  g.moveTo(...at(f.hit === 'centre' ? edgeA : hitA))
+  g.lineTo(...at(endA))
   g.stroke()
 
   // The hit zone's flash, under the markers.
-  if (pulse > 0.01 && hit) {
-    g.globalAlpha = 0.55 * pulse
-    g.fillStyle = heatColor(hit.speed, f.oklch)
+  const [hx, hy] = at(hitA)
+  if (f.ring !== 'none' && pulse > 0.01 && hit) {
+    g.globalAlpha = 0.5 * pulse * f.edgeDim
+    g.fillStyle = colourOf(f, hit.speed)
     g.beginPath()
-    g.arc(hitA, mid, maxR * (1.05 + 0.45 * pulse), 0, Math.PI * 2)
+    g.arc(hx, hy, ringR * (0.95 + 0.4 * pulse), 0, Math.PI * 2)
     g.fill()
   }
 
   for (const m of markersAt(f.turns, f.now, f.aheadMs, f.aheadMs * behindX)) {
-    const alpha = markerAlpha(m.x, behindX)
-    if (alpha <= 0)
+    const past = m.x < 0
+    let alpha = markerAlpha(m.x, behindX) * tailFade(m.x, f.rowEndX) * (f.uncertain ? uncertainFade(m.x) : 1) * f.edgeDim
+    if (past && f.hit === 'centre')
+      alpha *= 0.6
+    if (alpha <= 0.01)
       continue
-    const a = hitA + m.x * span
+    const [x, y] = at(hitA + m.x * span)
     if (m.turn.kind === 'bottom') {
-      const r = markerRadius(m.turn.amp, maxR) * (m.x < 0 ? 1 + (m.x / behindX) * 0.5 : 1)
-      g.globalAlpha = alpha
-      g.fillStyle = heatColor(m.turn.speed, f.oklch)
-      g.beginPath()
-      g.arc(a, mid, Math.max(1, r), 0, Math.PI * 2)
-      g.fill()
-      g.globalAlpha = alpha * 0.5
-      g.strokeStyle = 'rgba(0,0,0,0.6)'
-      g.lineWidth = 1
-      g.stroke()
+      let r = f.sizeByDepth ? markerRadius(m.turn.amp, maxR) : fixedR
+      if (past && f.hit === 'start')
+        r *= 1 + (m.x / behindX) * 0.5
+      if (m.turn === hit)
+        r *= 1 + 0.35 * pulse
+      const fill = past && f.hit === 'centre' ? PAST : colourOf(f, m.turn.speed)
+      marker(g, f.shape, x, y, Math.max(1, r), dpr, fill, alpha)
     }
     else if (f.showTops) {
-      const len = markerRadius(m.turn.amp, maxR) * 0.55
+      const len = (f.sizeByDepth ? markerRadius(m.turn.amp, maxR) : fixedR) * 0.55
       g.globalAlpha = alpha * 0.5
       g.strokeStyle = p.text
       g.lineWidth = Math.max(1.5, 2 * f.scale)
       g.lineCap = 'round'
       g.beginPath()
-      g.moveTo(a, mid - len)
-      g.lineTo(a, mid + len)
+      if (vertical) {
+        g.moveTo(x - len, y)
+        g.lineTo(x + len, y)
+      }
+      else {
+        g.moveTo(x, y - len)
+        g.lineTo(x, y + len)
+      }
       g.stroke()
     }
   }
 
-  // The hit zone itself, on top.
-  g.globalAlpha = 0.55 + 0.45 * pulse
-  g.strokeStyle = pulse > 0.01 ? p.text : p.accent
-  g.lineWidth = Math.max(1.5, 2 * f.scale)
-  g.beginPath()
-  g.arc(hitA, mid, maxR * (1.12 + 0.18 * pulse), 0, Math.PI * 2)
-  g.stroke()
+  // The hit zone itself, on top: a ring, and maybe a pointer at it from the outer side.
+  if (f.ring !== 'none') {
+    const plain = f.colour === 'speed' || f.colour === 'accent' ? p.accent : '#ffffff'
+    g.globalAlpha = (0.65 + 0.35 * pulse) * Math.max(0.5, f.edgeDim)
+    g.strokeStyle = pulse > 0.01 ? '#ffffff' : plain
+    g.lineWidth = Math.max(1.5, 2 * f.scale)
+    g.beginPath()
+    g.arc(hx, hy, ringR * (1 + 0.15 * pulse), 0, Math.PI * 2)
+    g.stroke()
+    if (f.ring === 'pointer') {
+      const gap = ringR + T * 0.04
+      const len = T * 0.13
+      const half = T * 0.09
+      g.fillStyle = '#ffffff'
+      g.beginPath()
+      if (vertical) {
+        g.moveTo(hx - gap, hy)
+        g.lineTo(hx - gap - len, hy - half)
+        g.lineTo(hx - gap - len, hy + half)
+      }
+      else {
+        g.moveTo(hx, hy + gap)
+        g.lineTo(hx - half, hy + gap + len)
+        g.lineTo(hx + half, hy + gap + len)
+      }
+      g.closePath()
+      g.fill()
+    }
+  }
   g.restore()
   g.globalAlpha = 1
+
+  if (f.edgeText)
+    caption(g, f.edgeText, w / 2, h / 2, Math.round(Math.max(10, 12 * f.scale)), p, 'center')
 }
 
 /**
@@ -245,8 +336,9 @@ export function drawGuide(g: CanvasRenderingContext2D, f: GuideFrame) {
     const tb = Math.min(b.at, f.now + f.aheadMs)
     const pa = a.pos + ((b.pos - a.pos) * (ta - a.at)) / (b.at - a.at)
     const pb = a.pos + ((b.pos - a.pos) * (tb - a.at)) / (b.at - a.at)
-    g.globalAlpha = markerAlpha((ta - f.now) / f.aheadMs, 0) * 0.95
-    g.strokeStyle = heatColor(speed, f.oklch)
+    const tx = (ta - f.now) / f.aheadMs
+    g.globalAlpha = markerAlpha(tx, 0) * tailFade(tx, f.rowEndX) * (f.uncertain ? uncertainFade(tx) : 1) * f.edgeDim * 0.95
+    g.strokeStyle = colourOf(f, speed)
     g.beginPath()
     g.moveTo(x(ta), y(pa))
     g.lineTo(x(tb), y(pb))
@@ -257,11 +349,11 @@ export function drawGuide(g: CanvasRenderingContext2D, f: GuideFrame) {
   for (const m of markersAt(f.turns, f.now, f.aheadMs)) {
     if (m.turn.kind !== 'bottom' && !f.showTops)
       continue
-    const alpha = markerAlpha(m.x, 0)
+    const alpha = markerAlpha(m.x, 0) * tailFade(m.x, f.rowEndX) * (f.uncertain ? uncertainFade(m.x) : 1) * f.edgeDim
     if (alpha <= 0)
       continue
     g.globalAlpha = alpha
-    g.fillStyle = m.turn.kind === 'bottom' ? heatColor(m.turn.speed, f.oklch) : p.text
+    g.fillStyle = m.turn.kind === 'bottom' ? colourOf(f, m.turn.speed) : p.text
     g.beginPath()
     g.arc(x(m.turn.at), y(m.turn.pos), (m.turn.kind === 'bottom' ? 3.5 : 2) * s, 0, Math.PI * 2)
     g.fill()
@@ -284,10 +376,10 @@ export function drawGuide(g: CanvasRenderingContext2D, f: GuideFrame) {
   const ph = 9 * s * (1 + 0.3 * pulse)
   g.globalAlpha = 1
   if (pulse > 0.01) {
-    g.shadowColor = heatColor(speedNow, f.oklch)
+    g.shadowColor = colourOf(f, speedNow)
     g.shadowBlur = 14 * s * pulse
   }
-  g.fillStyle = heatColor(speedNow, f.oklch)
+  g.fillStyle = colourOf(f, speedNow)
   roundRect(g, gx - pw / 2, py - ph / 2, pw, ph, ph / 2)
   g.fill()
   g.shadowBlur = 0
@@ -296,4 +388,8 @@ export function drawGuide(g: CanvasRenderingContext2D, f: GuideFrame) {
   g.lineWidth = 1.5
   g.stroke()
   g.globalAlpha = 1
+  if (f.edgeText) {
+    g.setTransform(dpr, 0, 0, dpr, 0, 0)
+    caption(g, f.edgeText, w / 2, h / 2, Math.round(Math.max(10, 12 * s)), p, 'center')
+  }
 }

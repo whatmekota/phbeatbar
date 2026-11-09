@@ -87,3 +87,19 @@ describe('following generated motion', () => {
     assert.equal(tr.ready(), true)
   })
 })
+
+describe('generated motion that says when its beat is (playhound 2.2)', () => {
+  it('is ready at once and puts the beats where it says', () => {
+    const tr = createReadoutTracker()
+    tr.feed(1000, { spm: 120, depth: 0.8, pos: 0.5, nextStrokeInMs: 200 })
+    assert.equal(tr.ready(), true)
+    const bottoms = tr.turns(1000, 1500).filter(t => t.kind === 'bottom').map(t => t.at)
+    assert.deepEqual(bottoms, [1200, 1700, 2200])
+  })
+
+  it('falls back to watching the stroke when it says nothing', () => {
+    const tr = createReadoutTracker()
+    tr.feed(1000, { spm: 120, depth: 0.8, pos: 0.5, nextStrokeInMs: null })
+    assert.equal(tr.ready(), false)
+  })
+})

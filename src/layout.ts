@@ -98,3 +98,94 @@ export function aheadInScript(lookaheadS: number, rate: number): number {
   const r = Number.isFinite(rate) && rate > 0 ? rate : 1
   return lookaheadS * 1000 * r
 }
+
+/**
+ * Where the row of markers stops, when it stops inside the window: the `x`
+ * of the last turn before the script ends or pauses for a while, else null
+ * (the strokes carry on past the far end). A pause counts when the next turn
+ * is more than `gapMs`, or three times the last spacing, after the last one
+ * in the window, whichever is longer.
+ */
+export function rowEnd(turns: readonly Turn[], now: number, aheadMs: number, gapMs = 1500): number | null {
+  if (!(aheadMs > 0))
+    return null
+  const after = firstAtOrAfter(turns, now + aheadMs + 1e-6)
+  const last = after - 1
+  if (last < 0 || turns[last].at < now)
+    return null
+  const next = turns[after]
+  const spacing = last > 0 ? turns[last].at - turns[last - 1].at : 0
+  if (next && next.at - turns[last].at <= Math.max(gapMs, 3 * spacing))
+    return null
+  return (turns[last].at - now) / aheadMs
+}
+
+/**
+ * How visible a marker is toward the end of the row when the row stops
+ * inside the window (see rowEnd): solid near the hit zone, fading over the
+ * last `tail` of the row so the strokes thin out instead of stopping dead.
+ */
+export function tailFade(x: number, endX: number | null, tail = 0.3): number {
+  if (endX === null || x <= 0)
+    return 1
+  const f = (endX + 0.05 - x) / tail
+  return Math.max(0.15, Math.min(1, f))
+}
+
+/**
+ * Generated motion only knows its tempo now, so the further ahead a beat is
+ * the less sure it is: solid to `from`, fading to `floor` at the far end.
+ */
+export function uncertainFade(x: number, from = 0.35, floor = 0.15): number {
+  if (x <= from)
+    return 1
+  return Math.max(floor, 1 - ((x - from) / (1 - from)) * (1 - floor))
+}
+
+/** A box: left, top, width, height, CSS pixels. */
+export interface Rect { x: number, y: number, w: number, h: number }
+
+export type Side = 'top' | 'bottom' | 'left' | 'right'
+export type Align = 'start' | 'centre' | 'end'
+
+export interface BarPlacement {
+  side: Side
+  /** Along the edge: left/top, centre, right/bottom. */
+  align: Align
+  /** Part of the side it covers, 0–1; 1 is edge to edge. */
+  length: number
+  /** Across the edge, px. */
+  thickness: number
+  /** What the player's own bars cover of the layer, top and bottom, px. */
+  insetTop: number
+  insetBottom: number
+}
+
+/** Space kept between the bar and the edge it sits on, and its ends when it isn't full length, px. */
+export const EDGE_GAP = 12
+
+/**
+ * The bar's box in the layer: on `side` of the picture, clear of the
+ * player's bars, `length` of that side long and placed along it by `align`.
+ * Full length runs edge to edge of the picture.
+ */
+export function barRect(picture: Rect, layerH: number, p: BarPlacement): Rect & { full: boolean } {
+  const full = p.length >= 0.999
+  const margin = full ? 0 : EDGE_GAP
+  const len = Math.min(1, Math.max(0.05, p.length))
+  // The part of the picture the player's bars leave free.
+  const top = Math.max(picture.y, p.insetTop)
+  const bottom = Math.max(top, Math.min(picture.y + picture.h, layerH - p.insetBottom))
+  const place = (start: number, size: number, l: number) =>
+    p.align === 'start' ? start + margin : p.align === 'end' ? start + size - margin - l : start + (size - l) / 2
+  if (p.side === 'top' || p.side === 'bottom') {
+    const w = Math.max(0, (picture.w - 2 * margin) * len)
+    const h = p.thickness
+    const y = p.side === 'top' ? top + EDGE_GAP : bottom - EDGE_GAP - h
+    return { x: place(picture.x, picture.w, w), y, w, h, full }
+  }
+  const h = Math.max(0, (bottom - top - 2 * margin) * len)
+  const w = p.thickness
+  const x = p.side === 'left' ? picture.x + EDGE_GAP : picture.x + picture.w - EDGE_GAP - w
+  return { x, y: place(top, bottom - top, h), w, h, full }
+}

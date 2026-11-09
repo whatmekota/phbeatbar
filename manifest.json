@@ -1,10 +1,12 @@
 {
   "id": "phbeatbar",
   "name": "Beat bar",
-  "version": "0.1.0",
-  "description": "A beat meter over the video: the script's strokes scroll toward a hit zone, so you can follow it by hand.",
+  "version": "0.2.0",
+  "description": "A beat meter over the video, like a Cock Hero beat bar: follow the script's strokes by hand.",
   "author": "whatmekota",
   "main": "dist/index.js",
   "api": 2,
-  "permissions": ["player", "scripts", "stage"]
+  "permissions": ["player", "scripts", "stage"],
+  "category": "visuals",
+  "keywords": ["beat bar", "beat meter", "cock hero", "metronome", "tempo"]
 }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { aheadInScript, heatColor, markerAlpha, markerRadius, markersAt, pulseAt, scriptTime } from '../src/layout.ts'
+import { aheadInScript, barRect, EDGE_GAP, heatColor, markerAlpha, markerRadius, markersAt, pulseAt, rowEnd, scriptTime, tailFade, uncertainFade } from '../src/layout.ts'
 import { cleanActions, turningPoints } from '../src/turns.ts'
 
 // Bottoms at 0, 500, 1000…, tops between; full strokes.
@@ -100,5 +100,90 @@ describe('heatmap colours', () => {
 
   it('has an hsl form for canvases without oklch', () => {
     assert.equal(heatColor(0, false, 0.5), 'hsla(210,85%,60.0%,0.5)')
+  })
+})
+
+describe('where the row stops', () => {
+  it('is nowhere while strokes carry on past the window', () => {
+    assert.equal(rowEnd(turns, 1000, 1000), null)
+  })
+
+  it('is the last stroke when the script ends inside the window', () => {
+    // The last turn is at 10 000 ms.
+    assert.equal(rowEnd(turns, 9000, 2000), 0.5)
+  })
+
+  it('is the last stroke before a long pause', () => {
+    const gap = turningPoints(cleanActions([
+      ...Array.from({ length: 9 }, (_, i) => ({ at: i * 250, pos: i % 2 ? 100 : 0 })),
+      { at: 6000, pos: 100 },
+      { at: 6250, pos: 0 },
+      { at: 6500, pos: 100 },
+    ]))
+    assert.equal(rowEnd(gap, 1000, 2000), 0.5) // the turn at 2000
+    assert.equal(rowEnd(gap, 0, 1000), null) // still strokes beyond this window
+  })
+
+  it('fades the end of a stopping row, keeping the near ones solid', () => {
+    assert.equal(tailFade(0.2, null), 1)
+    assert.equal(tailFade(0, 0.1), 1)
+    assert.equal(tailFade(0.1, 0.6), 1)
+    const a = tailFade(0.4, 0.6)
+    const b = tailFade(0.6, 0.6)
+    assert.ok(a < 1 && b < a && b >= 0.15)
+  })
+
+  it('fades guessed beats with distance', () => {
+    assert.equal(uncertainFade(0.2), 1)
+    assert.ok(uncertainFade(0.7) < 1)
+    assert.equal(+uncertainFade(1).toFixed(3), 0.15)
+    assert.ok(uncertainFade(0.9) < uncertainFade(0.6))
+  })
+})
+
+describe('placing the bar', () => {
+  const layer = { x: 0, y: 0, w: 1600, h: 900 }
+  const base = { side: 'bottom', align: 'centre', length: 0.5, thickness: 50, insetTop: 0, insetBottom: 0 } as const
+
+  it('centres a half-length bar along the bottom, clear of the edge', () => {
+    const r = barRect(layer, 900, base)
+    assert.equal(r.w, (1600 - 24) * 0.5)
+    assert.equal(r.x, (1600 - r.w) / 2)
+    assert.equal(r.y, 900 - EDGE_GAP - 50)
+    assert.equal(r.full, false)
+  })
+
+  it('runs edge to edge at full length', () => {
+    const r = barRect(layer, 900, { ...base, length: 1 })
+    assert.deepEqual([r.x, r.w, r.full], [0, 1600, true])
+  })
+
+  it('sits at the start or the end of its edge', () => {
+    assert.equal(barRect(layer, 900, { ...base, align: 'start' }).x, EDGE_GAP)
+    const end = barRect(layer, 900, { ...base, align: 'end' })
+    assert.equal(end.x + end.w, 1600 - EDGE_GAP)
+  })
+
+  it('keeps clear of the player\'s bars', () => {
+    assert.equal(barRect(layer, 900, { ...base, insetBottom: 116 }).y, 900 - 116 - EDGE_GAP - 50)
+    assert.equal(barRect(layer, 900, { ...base, side: 'top', insetTop: 64 }).y, 64 + EDGE_GAP)
+  })
+
+  it('stays over a pillarboxed picture, not the black bars', () => {
+    // A tall video in a wide player: the picture is 506 px wide in the middle.
+    const picture = { x: 547, y: 0, w: 506, h: 900 }
+    const r = barRect(picture, 900, { ...base, align: 'start', length: 0.5 })
+    assert.equal(r.x, 547 + EDGE_GAP)
+    assert.equal(r.w, (506 - 24) * 0.5)
+    const full = barRect(picture, 900, { ...base, length: 1 })
+    assert.deepEqual([full.x, full.w], [547, 506])
+  })
+
+  it('stands on the left or right, its length taken from the height left free', () => {
+    const r = barRect(layer, 900, { ...base, side: 'left', length: 1, insetTop: 64, insetBottom: 100 })
+    assert.deepEqual([r.x, r.y, r.w, r.h], [EDGE_GAP, 64, 50, 900 - 64 - 100])
+    const right = barRect(layer, 900, { ...base, side: 'right', align: 'start' })
+    assert.equal(right.x, 1600 - EDGE_GAP - 50)
+    assert.equal(right.y, EDGE_GAP)
   })
 })

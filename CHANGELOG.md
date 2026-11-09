@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.0
+
+- **Looks** in one click: **Classic centre**, **Hearts** and **Portrait**. Changing anything they set makes the look Custom.
+- **Video shape: Auto** (the default): a tall video gets the Portrait look, over the picture itself rather than the black bars (playhound 2.2+).
+- Where the beat lands: **at the start** or **in the middle**, with past beats carrying on, greyed.
+- **Markers**: circles, hearts, stars, paws or diamonds, drawn as vector shapes; one colour (pink, white, the theme's accent) or by speed; sized by stroke length or all the same.
+- **Hit marker**: a ring, a ring with a pointer, or none.
+- The bar's place: any edge, left, centre or right along it, and its **length** up to the whole width of the picture; the dark strip can be turned off.
+- When the strokes stop inside the lookahead, the last ones fade out; generated motion's further beats fade, its future being a guess.
+- **Metronome sounds**: soft click, wood block, tick and pop, made with Web Audio. Picking one plays it; a palette command plays it again.
+- Stroke tops are off by default. The strokes-a-minute label can be turned off.
+- With playhound 2.2: dims and counts down during an edge (or hides, a setting), keeps clear of the player's bars as they show and hide, follows generated motion from its first beat, and repaints on a theme change. Still runs on 2.0.
+
 ## 0.1.0
 
 First version, for playhound 2.0 and newer.

@@ -1,0 +1,10 @@
+{
+  "id": "phbeatbar",
+  "name": "Beat bar",
+  "version": "0.1.0",
+  "description": "A beat meter over the video: the script's strokes scroll toward a hit zone, so you can follow it by hand.",
+  "author": "whatmekota",
+  "main": "dist/index.js",
+  "api": 2,
+  "permissions": ["player", "scripts", "stage"]
+}

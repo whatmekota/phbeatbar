@@ -92,6 +92,16 @@ describe('turning points', () => {
   })
 })
 
+describe('skipping small strokes', () => {
+  it('a bounce shorter than minMove is part of the stroke around it', () => {
+    // Down to 0, a 20-unit bounce, on down... a full stroke up to 100, back down.
+    const a = cleanActions([{ at: 0, pos: 100 }, { at: 200, pos: 10 }, { at: 300, pos: 30 }, { at: 400, pos: 0 }, { at: 800, pos: 100 }, { at: 1200, pos: 0 }])
+    assert.equal(turningPoints(a).length, 6)
+    const big = turningPoints(a, 25)
+    assert.deepEqual(big.map(t => [t.at, t.kind]), [[0, 'top'], [400, 'bottom'], [800, 'top'], [1200, 'bottom']])
+  })
+})
+
 describe('reading a script at a time', () => {
   const a = cleanActions([{ at: 0, pos: 0 }, { at: 1000, pos: 100 }, { at: 2000, pos: 0 }])
 

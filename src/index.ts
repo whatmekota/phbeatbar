@@ -87,10 +87,12 @@ export default function activate(ctx: PluginContext) {
   let actions: Action[] = []
   let turns: Turn[] = []
   let offsetMs = 0
+  /** The turns, without strokes shorter than the user wants beats for (5 units always: the line's own wobble). */
+  const strokeTurns = () => turningPoints(actions, Math.max(5, cfg.minStroke))
   function takeScripts(s: ScriptSnapshot) {
     const axis = s.axes.find(a => a.axis === 'L0')
     actions = axis ? cleanActions(axis.actions) : []
-    turns = turningPoints(actions)
+    turns = strokeTurns()
     offsetMs = axis?.offsetMs ?? 0
     version++
   }
@@ -127,6 +129,8 @@ export default function activate(ctx: PluginContext) {
     for (const [k, want] of Object.entries(lookChanges(prev, v)))
       ctx.settings.set(k, want)
     refresh()
+    if (v.minStroke !== prev.minStroke)
+      turns = strokeTurns()
     if (!cfg.tick)
       metronome.cancel()
     if (v.sound !== prev.sound || v.volume !== prev.volume) {

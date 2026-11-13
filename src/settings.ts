@@ -27,6 +27,8 @@ export interface Config {
   shape: Shape
   colour: Colour
   sizeByDepth: boolean
+  /** Strokes that travel less than this (funscript units, 0–100) get no beat; 0 marks every stroke. */
+  minStroke: number
   ring: Ring
   label: boolean
   lookaheadS: number
@@ -151,6 +153,7 @@ export const FIELDS: SettingField[] = [
     default: 'speed',
   },
   { key: 'sizeByDepth', type: 'switch', label: 'Bigger markers for longer strokes', default: true, when: v => v.style !== 'guide' },
+  { key: 'minStroke', type: 'slider', label: 'Skip strokes shorter than', hint: 'A stroke that travels less than this much of the range gets no beat: a small flick or bounce becomes part of the stroke around it. 0% marks every stroke.', min: 0, max: 60, step: 5, unit: '%', default: 0 },
   {
     key: 'ring',
     type: 'select',
@@ -219,6 +222,7 @@ export function readConfig(v: Record<string, unknown>): Config {
     shape: oneOf(v.shape, ['circle', 'heart', 'star', 'paw', 'diamond'] as const, 'circle'),
     colour: oneOf(v.colour, ['speed', 'accent', 'white', 'pink'] as const, 'speed'),
     sizeByDepth: v.sizeByDepth !== false,
+    minStroke: num(v.minStroke, 0, 0, 60),
     ring: oneOf(v.ring, ['ring', 'pointer', 'none'] as const, 'ring'),
     label: v.label !== false,
     lookaheadS: num(v.lookahead, 3, 1, 8),

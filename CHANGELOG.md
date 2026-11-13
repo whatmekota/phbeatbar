@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.2
+
+- **Skip strokes shorter than**: a new setting under Beats. A stroke that travels less than this much of the range gets no beat; a small flick or bounce becomes part of the stroke around it. 0% (the default) marks every stroke, as before.
+
 ## 0.2.1
 
 - The **hit marker takes the markers' shape**: a ring for circles, a hollow heart for hearts, a star, paw or diamond outline for the others, with the pointer under it if picked. The beat lands in it and pops, in its own colour.

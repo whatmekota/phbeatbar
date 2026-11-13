@@ -1,7 +1,7 @@
 {
   "id": "phbeatbar",
   "name": "Beat bar",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "A beat meter over the video, like a Cock Hero beat bar: follow the script's strokes by hand.",
   "icon": "icon.png",
   "author": "whatmekota",

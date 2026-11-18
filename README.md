@@ -4,7 +4,7 @@
 
 <!-- Screenshot: add docs/beatbar.webp (the beat meter at the bottom of a playing video) and link it here. -->
 
-Needs playhound **2.0** or newer, in the desktop app or a browser. With **2.2** or newer it also keeps over the picture itself (a tall video's, not the black bars beside it), reacts to edges, keeps clear of the player's bars as they come and go, and follows generated motion from its first beat.
+Needs playhound **2.2.8** or newer (plugin API 7), in the desktop app or a browser.
 
 ## Install
 
@@ -24,10 +24,12 @@ Play a video with a stroke script and the bar shows over it.
 - **Stroke guide**: a gauge with a marker where the stroke is now, and beside it the path of the next couple of seconds.
 - **Shift+B** shows and hides it (or **Show or hide the beat bar** in the command palette, Ctrl K). If another plugin already has Shift+B it takes Alt+B, or none; the setting's hint says which.
 - It follows the video: pause, seeking, the playback speed (at double speed the beats close up) and the script's offset.
-- Without a script, it follows playhound's generated motion (music sync, tap tempo, the Manual source) at the tempo it strokes at. With neither, it stays hidden.
+- Without a script, it follows playhound's generated motion (music sync, tap tempo, the Manual source) at the tempo it strokes at, from its first beat, in the stroke's own shape: with a saw stroke the top comes late and the drop is fast, with a pulse the top comes early, and the stroke guide draws the path as the generator makes it. With neither, it stays hidden.
 - During an edge it dims and counts the hold down, or hides (a setting). **Esc** (panic) hides it while the panic lasts.
 
 It isn't on the mini player or in the pop-out window, only on the full-size player and in fullscreen.
+
+The bar shows the stroke as the script or the generator makes it: a script's beats keep with the picture whatever your device's latency, and your range and invert don't change it.
 
 ### Looks
 
@@ -44,9 +46,13 @@ A portrait video keeps your settings: the bar sits over the picture, not the bla
 
 In **Settings → Plugins → Beat bar**, besides the look: the style; which edge it sits on, where along it (left, centre, right) and how much of it it covers (100% runs across the whole picture); size, opacity and the dark strip; where the beat lands, the markers, their colour and size, the hit marker; the stroke tops (off by default) and the strokes-a-minute label; how far ahead it looks (3 s by default; the stroke guide shows two thirds of that); generated motion; what to do during an edge; and a **metronome**, off by default, with four sounds (soft click, wood block, tick, pop). Picking a sound plays a few beats of it, and **Hear the beat bar's metronome sound** in the command palette plays it again.
 
+### Achievements
+
+In playhound's **Stats → Achievements**, under Beat bar: 100, 1,000 and 10,000 beats on the bar, and a minute of beats at 180 a minute or faster without a break. A beat counts when it reaches the hit zone while the bar shows and the video plays (or generated motion strokes), and not while an edge holds back.
+
 ## Privacy
 
-It reads only the loaded script and where the video is. It sends nothing anywhere and stores only its settings.
+It reads only the loaded script and where the video is. It sends nothing anywhere and stores only its settings and its count of beats.
 
 ## Build
 

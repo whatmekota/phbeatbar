@@ -1,12 +1,13 @@
 {
   "id": "phbeatbar",
   "name": "Beat bar",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "A beat meter over the video, like a Cock Hero beat bar: follow the script's strokes by hand.",
   "icon": "icon.png",
   "author": "whatmekota",
   "main": "dist/index.js",
-  "api": 2,
+  "api": 7,
+  "minPlayhound": "2.2.8",
   "permissions": [
     "player",
     "scripts",

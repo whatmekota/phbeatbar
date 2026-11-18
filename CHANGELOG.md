@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0
+
+Needs playhound 2.2.8 or newer (plugin API 7).
+
+- **Generated motion in its own shape**: each stroke's top is where playhound's generator has it (late for a saw, early for a pulse, halfway for the rest), a beat's colour is the speed of the half stroke into it, and the stroke guide draws the path in the stroke's shape instead of always a sine.
+- The stroke guide's marker for generated motion follows the stroke as the generator makes it: an inverted device no longer turns it upside down, and your range no longer squeezes it.
+- **Achievements**, in Stats → Achievements: 100, 1,000 and 10,000 beats on the bar, and a minute of beats at 180 a minute or faster.
+- What kept it running on playhound 2.0 and 2.1 is gone.
+
 ## 0.2.2
 
 - **Skip strokes shorter than**: a new setting under Beats. A stroke that travels less than this much of the range gets no beat; a small flick or bounce becomes part of the stroke around it. 0% (the default) marks every stroke, as before.

@@ -2,7 +2,8 @@ import type { Palette } from './draw'
 import type { Rect } from './layout'
 import type { Config } from './settings'
 import type { Action, Turn } from './turns'
-import type { EdgeState, PlayerSnapshot, PluginContext, ScriptSnapshot } from './types'
+import type { PlayerSnapshot, PluginContext, ScriptSnapshot } from './types'
+import { ACHIEVEMENTS, beatsBetween, createBeatCounter, createFastTimer } from './achievements'
 import { drawGuide, drawMeter } from './draw'
 import { aheadInScript, barRect, meterTrack, rowEnd, scriptTime, uncrowdedWindow, windowFor } from './layout'
 import { createMetronome, SCHEDULE_AHEAD_MS } from './metronome'
@@ -20,23 +21,23 @@ import { cleanActions, firstAtOrAfter, pathBetween, positionAt, spmAround, turni
  * it goes over the next seconds.
  *
  * Without a script it follows playhound's generated motion (music sync, tap
- * tempo, Manual) through motion.readout, and hides when there is neither.
- * On a tall video it keeps over the picture, its beats spaced as on a wide
- * one. It draws
- * only while something moves, and panic hides it.
+ * tempo, Manual) through motion.readout, in the stroke's own shape, and
+ * hides when there is neither. On a tall video it keeps over the picture,
+ * its beats spaced as on a wide one. It draws only while something moves,
+ * and panic hides it.
  *
- * Written for plugin API 2 (playhound 2.0); what playhound 2.2 adds (the
- * video's size and where its picture is, edges, the generator's own beat,
- * where the player's bars are, theme changes, fallback keys) is used when it
- * is there. Without it the bar uses the whole player and the landscape look.
+ * A script's beats are read off the script at the video's clock, so they
+ * land with the picture: motion.axes and onAxis run the user's device
+ * latency ahead of it while a script plays. Generated motion isn't run
+ * ahead, so there motion.axes says where the stroke is.
+ *
+ * Written for plugin API 7 (playhound 2.2.8).
  */
 
 /** The stroke guide shows the nearer part of the lookahead: a path is denser than a row of beats. */
 const GUIDE_SHARE = 2 / 3
 /** How long the bar stays after the script's last stroke. */
 const END_GRACE_MS = 2000
-/** Before playhound 2.2 says where its bars are: about where the bottom one ends. */
-const OLD_INSET_BOTTOM = 68
 /** How often the bar's place is checked against the player's bars, ms. */
 const PLACE_EVERY_MS = 150
 
@@ -109,15 +110,14 @@ export default function activate(ctx: PluginContext) {
   const metronome = createMetronome()
   ctx.safety.onPanic(() => metronome.cancel())
 
-  // ─── Edges (playhound 2.2) ───────────────────────────────────────────────
-  let edgeOf: (() => EdgeState) | null = null
-  try {
-    if (typeof ctx.session?.edgeState === 'function') {
-      ctx.session.edgeState()
-      edgeOf = () => ctx.session.edgeState()
-    }
-  }
-  catch {}
+  // ─── Achievements ────────────────────────────────────────────────────────
+  ctx.achievements.define(ACHIEVEMENTS)
+  const beats = createBeatCounter({
+    load: () => ctx.storage.get<number>('beats'),
+    save: n => void ctx.storage.set('beats', n).catch(() => {}),
+    progress: (id, n) => ctx.achievements.progress(id, n),
+  })
+  const fastFor = createFastTimer()
 
   // ─── Settings, looks and the sound preview ───────────────────────────────
   let previewTimer: ReturnType<typeof setTimeout> | undefined
@@ -153,21 +153,9 @@ export default function activate(ctx: PluginContext) {
       ctx.ui.toast(on ? 'Beat bar on' : 'Beat bar off', nothing ? { detail: 'It shows once a stroke script is loaded, or generated motion runs.' } : undefined)
     },
   }
-  let key: string | null = null
-  if (typeof ctx.commands.keyFree === 'function') {
-    // playhound 2.2: it takes the first free one of the list itself.
-    key = TOGGLE_KEYS.find(k => ctx.commands.keyFree(k)) ?? null
-    ctx.commands.register({ ...toggle, kbd: TOGGLE_KEYS })
-  }
-  else {
-    for (const k of TOGGLE_KEYS) {
-      // A taken key is refused and the command added without one; the next try replaces it.
-      if (ctx.commands.register({ ...toggle, kbd: k })) {
-        key = k
-        break
-      }
-    }
-  }
+  // playhound takes the first free key of the list itself.
+  const key = TOGGLE_KEYS.find(k => ctx.commands.keyFree(k)) ?? null
+  ctx.commands.register({ ...toggle, kbd: TOGGLE_KEYS })
   ctx.commands.register({ id: 'preview', title: 'Hear the beat bar\'s metronome sound', hint: 'Four beats of the sound picked in its settings', icon: SOUND_ICON, run: preview })
   ctx.ui.settings(FIELDS.map(f => f.key === 'visible'
     ? { ...f, hint: key ? `Also ${key}, or "Show or hide the beat bar" in the command palette (Ctrl K).` : 'Also "Show or hide the beat bar" in the command palette (Ctrl K).' }
@@ -191,15 +179,7 @@ export default function activate(ctx: PluginContext) {
       palette = readPalette()
       version++
     }
-    let unTheme: () => void
-    if (typeof ctx.ui.onThemeChange === 'function') {
-      unTheme = ctx.ui.onThemeChange(repaint)
-    }
-    else {
-      const obs = new MutationObserver(repaint)
-      obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class', 'style'] })
-      unTheme = () => obs.disconnect()
-    }
+    const unTheme = ctx.ui.onThemeChange(repaint)
 
     // Where the bar goes: worked out from the layer's size, the picture in
     // it, the player's bars and the settings; checked a few times a second.
@@ -217,8 +197,8 @@ export default function activate(ctx: PluginContext) {
       const insetBottom = Number.parseFloat(cs.getPropertyValue('--ph-controls-bottom'))
       const W = el.clientWidth
       const H = el.clientHeight
-      const pic = typeof ctx.player.picture === 'function' ? ctx.player.picture() : null
-      // The picture in the player (the same box as this layer); all of it on older playhound.
+      const pic = ctx.player.picture()
+      // The picture in the player (the same box as this layer); all of it without one.
       const picture = pic && pic.width > 0 && pic.height > 0
         ? { x: pic.x, y: pic.y, w: pic.width, h: pic.height }
         : { x: 0, y: 0, w: W, h: H }
@@ -230,7 +210,7 @@ export default function activate(ctx: PluginContext) {
         length: cfg.length,
         thickness,
         insetTop: Number.isFinite(insetTop) ? insetTop : 0,
-        insetBottom: Number.isFinite(insetBottom) ? insetBottom : OLD_INSET_BOTTOM,
+        insetBottom: Number.isFinite(insetBottom) ? insetBottom : 0,
       })
       const sig = `${[r.x, r.y, r.w, r.h, picture.w, picture.h].map(n => Math.round(n)).join(',')}|${cfg.opacity}|${cfg.lookaheadS}`
       if (sig === placedFor)
@@ -248,12 +228,14 @@ export default function activate(ctx: PluginContext) {
     }
     const ro = new ResizeObserver(() => place(performance.now(), true))
     ro.observe(el)
-    const unPicture = typeof ctx.player.onPicture === 'function' ? ctx.player.onPicture(() => place(performance.now(), true)) : () => {}
+    const unPicture = ctx.player.onPicture(() => place(performance.now(), true))
 
     let dpr = 0
     let shown = false
     let drawn = ''
     let lastNow = Number.NaN
+    /** The generator's phase last frame, to count its beats; NaN when it wasn't followed. */
+    let lastPhase = Number.NaN
     let placedVersion = -1
     /** The last tick scheduled, in the drawn time; ticks go only to later beats. */
     let tickedTo = -Infinity
@@ -302,15 +284,19 @@ export default function activate(ctx: PluginContext) {
       place(ms, placedVersion !== version)
       placedVersion = version
 
-      const edge = edgeOf?.() ?? null
-      const holding = !!edge && edge.phase !== 'idle' && edge.holdBack > 0.02
+      const edge = ctx.session.edgeState()
+      const holding = edge.phase !== 'idle' && edge.holdBack > 0.02
       let source: 'script' | 'generated' | null = null
+      const readout = turns.length < 2 && cfg.generated ? ctx.motion.readout() : null
+      // Where the stroke is, before the user's range and invert: motion.axes
+      // has it so (playhound 2.2.8's readout().pos is still after them).
+      const strokePos = readout ? (ctx.motion.axes().L0 ?? readout.pos) : 0
       if (cfg.visible && !ctx.safety.panicked() && !(holding && cfg.edges === 'hide')) {
         if (turns.length >= 2) {
           source = 'script'
         }
-        else if (cfg.generated) {
-          tracker.feed(ms, ctx.motion.readout())
+        else if (readout) {
+          tracker.feed(ms, { ...readout, pos: strokePos })
           if (tracker.ready())
             source = 'generated'
         }
@@ -318,8 +304,10 @@ export default function activate(ctx: PluginContext) {
       if (!source && shown)
         tracker.reset()
       show(!!source)
-      if (!source || rect.w < 8 || rect.h < 8)
+      if (!source || rect.w < 8 || rect.h < 8) {
+        lastPhase = Number.NaN
         return
+      }
 
       const ratio = window.devicePixelRatio || 1
       if (ratio !== dpr) {
@@ -339,6 +327,8 @@ export default function activate(ctx: PluginContext) {
       let posNow = 50
       let spm: number
       let rowEndX: number | null = null
+      /** Beats that reached the hit zone since the last frame. */
+      let landed = 0
       if (source === 'script') {
         rate = player.rate > 0 ? player.rate : 1
         playing = player.playing
@@ -364,7 +354,11 @@ export default function activate(ctx: PluginContext) {
           metronome.cancel()
           tickedTo = now - 1
         }
+        else if (!holding) {
+          landed = beatsBetween(turns, lastNow, now)
+        }
         lastNow = now
+        lastPhase = Number.NaN
       }
       else {
         now = ms
@@ -374,16 +368,25 @@ export default function activate(ctx: PluginContext) {
         list = tracker.turns(now, aheadMs, aheadMs)
         if (cfg.style === 'guide') {
           path = tracker.path(now, aheadMs)
-          posNow = Math.min(1, Math.max(0, ctx.motion.readout().pos)) * 100
+          posNow = Math.min(1, Math.max(0, strokePos)) * 100
         }
+        // The generator's phase going round is a beat (a doubled stroke's, twice).
+        const phase = readout!.phase
+        if (phase !== null && lastPhase - phase > 0.5 && !holding)
+          landed = 1
+        lastPhase = phase ?? Number.NaN
         lastNow = Number.NaN
       }
+
+      beats.add(landed)
+      if (fastFor(ms, spm, playing && !holding))
+        ctx.achievements.unlock('fast-minute')
 
       if (cfg.tick && playing && !holding)
         schedule(list, now, rate, source === 'generated' ? 15_000 / Math.max(1, spm) : 0)
 
-      const edgeDim = holding ? 1 - 0.7 * edge!.holdBack : 1
-      const edgeText = holding ? `Edge · ${Math.max(0, Math.ceil(edge!.remainingSec))} s` : null
+      const edgeDim = holding ? 1 - 0.7 * edge.holdBack : 1
+      const edgeText = holding ? `Edge · ${Math.max(0, Math.ceil(edge.remainingSec))} s` : null
 
       // Nothing moved (paused, and nothing else changed): leave the picture as it is.
       const sig = `${now}|${Math.round(aheadMs)}|${posNow}|${version}|${rect.w}x${rect.h}@${dpr}|${source}|${edgeText}|${edgeDim.toFixed(2)}`
@@ -422,6 +425,7 @@ export default function activate(ctx: PluginContext) {
       unPicture()
       unTheme()
       metronome.cancel()
+      beats.flush()
       box.remove()
     }
   }
@@ -431,6 +435,7 @@ export default function activate(ctx: PluginContext) {
   return () => {
     clearTimeout(previewTimer)
     removeOverlay()
+    beats.flush()
     metronome.close()
   }
 }

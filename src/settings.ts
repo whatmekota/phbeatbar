@@ -174,7 +174,6 @@ export const FIELDS: SettingField[] = [
     key: 'edges',
     type: 'select',
     label: 'During an edge',
-    hint: 'Needs playhound 2.2 or newer; older ones don\'t tell plugins about edges.',
     options: [
       { value: 'show', label: 'Dim it and count the hold down' },
       { value: 'hide', label: 'Hide it' },

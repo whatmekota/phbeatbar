@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { createReadoutTracker } from '../src/readout.ts'
+import { createReadoutTracker, strokeUnit, TOP_AT } from '../src/readout.ts'
 
 /** A generator stroking a sine at `spm` and `depth` round 0.5, sampled at 60 fps from `from` to `to` ms. */
 function run(tracker: ReturnType<typeof createReadoutTracker>, spm: number, depth: number, from: number, to: number, phaseMs = 0) {
@@ -88,7 +88,7 @@ describe('following generated motion', () => {
   })
 })
 
-describe('generated motion that says when its beat is (playhound 2.2)', () => {
+describe('generated motion that says when its beat is', () => {
   it('is ready at once and puts the beats where it says', () => {
     const tr = createReadoutTracker()
     tr.feed(1000, { spm: 120, depth: 0.8, pos: 0.5, nextStrokeInMs: 200 })
@@ -101,5 +101,54 @@ describe('generated motion that says when its beat is (playhound 2.2)', () => {
     const tr = createReadoutTracker()
     tr.feed(1000, { spm: 120, depth: 0.8, pos: 0.5, nextStrokeInMs: null })
     assert.equal(tr.ready(), false)
+  })
+})
+
+describe('the generator\'s stroke shape', () => {
+  /** A tracker told the next bottom is 200 ms off, at 60 spm, full depth. */
+  function told(shape: 'sine' | 'ease' | 'pulse' | 'saw' | 'sharp') {
+    const tr = createReadoutTracker()
+    tr.feed(1000, { spm: 60, depth: 1, pos: 0.5, nextStrokeInMs: 200, shape })
+    return tr
+  }
+
+  it('matches playhound\'s curves at the turns', () => {
+    for (const shape of ['sine', 'ease', 'pulse', 'saw', 'sharp'] as const) {
+      assert.equal(strokeUnit(0, shape), 0, shape)
+      assert.ok(Math.abs(strokeUnit(TOP_AT[shape], shape) - 1) < 1e-9, shape)
+      assert.ok(Math.abs(strokeUnit(1, shape)) < 1e-9, shape)
+    }
+  })
+
+  it('puts the tops where the shape has them: late for a saw, early for a pulse', () => {
+    const top = (shape: 'sine' | 'pulse' | 'saw') => told(shape).turns(1000, 1000).find(t => t.kind === 'top')!.at
+    assert.equal(top('sine'), 1200 + 500)
+    assert.equal(top('saw'), 1200 + 750)
+    assert.ok(Math.abs(top('pulse') - (1200 + 1000 / 3)) < 1e-6)
+  })
+
+  it('gives each half its own speed: a saw drops three times as fast as it rises', () => {
+    const ts = told('saw').turns(1000, 2500)
+    const up = ts.find(t => t.kind === 'top')!.speed
+    const down = ts.find(t => t.kind === 'bottom')!.speed
+    assert.ok(Math.abs(down / up - 3) < 1e-9)
+  })
+
+  it('draws the path in the shape: straight for sharp, eased for a sine', () => {
+    // A quarter of a stroke after the bottom at 1200: halfway up for sharp, less for a sine.
+    const at = (shape: 'sine' | 'sharp', t: number) => {
+      const p = told(shape).path(1000, 2000)
+      const i = p.findIndex(x => x.at >= t)
+      return p[i].pos
+    }
+    assert.ok(Math.abs(at('sharp', 1450) - 50) < 1e-6)
+    assert.ok(Math.abs(at('sine', 1450) - 50) < 1e-6)
+    assert.ok(at('sharp', 1325) > at('sine', 1325) + 8)
+  })
+
+  it('takes a missing shape as a sine', () => {
+    const tr = createReadoutTracker()
+    tr.feed(1000, { spm: 60, depth: 1, pos: 0.5, nextStrokeInMs: 200 })
+    assert.equal(tr.turns(1000, 1000).find(t => t.kind === 'top')!.at, 1700)
   })
 })
